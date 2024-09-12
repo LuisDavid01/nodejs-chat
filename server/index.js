@@ -25,10 +25,11 @@ const db = createClient(
 
 await db.execute(`CREATE TABLE IF NOT EXISTS messages (
                     id integer PRIMARY KEY AUTOINCREMENT,
-                    content text
-                )`)
+                    content text,
+                    user text
+                );`)
 
-io.on('connection', ( socket ) => {
+io.on('connection', async ( socket ) => {
     console.log('a user has connected')
     socket.on('disconnect', () => {
         console.log('a user has disconnected')
@@ -36,16 +37,36 @@ io.on('connection', ( socket ) => {
 
     socket.on('chat message', async (msg) => {
         let result
+        const username = socket.handshake.auth.username ?? 'anonymus'
+        console.log(username)
         try{
             result = await db.execute({
-                sql: `INSERT INTO messages(content) VALUES (:content)`,
-                args: { content: msg }
+                sql: 'INSERT INTO messages (content, user)  VALUES (:message, :username)',
+                args: { message: msg, username }
             })
         }catch(e){
             throw new Error('no se pudo guardar el mensaje en la db')
+            return
         }
-        io.emit('chat message', msg)
+        io.emit('chat message', msg, result.lastInsertRowid.toString(), username)
+        
+        
     })
+    
+    if(!socket.recovered){
+        try{
+            const results = await db.execute({
+                sql: 'SELECT id, content, user from messages WHERE id > ?',
+                args: [socket.handshake.auth.serverOffset ?? 0]
+            })
+            results.rows.forEach(row => {
+                socket.emit('chat message', row.content, row.id.toString(), row.user)
+            })
+        }catch(e){
+            console.log('an error has occurred ', e.message)
+        }
+        
+    }
 })
 app.use(logger('dev'))
 app.get('/', (req, res) => {
